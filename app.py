@@ -754,6 +754,7 @@ except Exception as e:
 
 calendar_df = load_calendar()
 
+ 
 for df in (sales, products, recs, forecasts, inventory, calendar_df):
     if isinstance(df, pd.DataFrame):
         for c in df.columns:
