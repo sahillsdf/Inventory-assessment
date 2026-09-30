@@ -1,132 +1,3 @@
-# """
-# FORESIGHT Dashboard — Streamlit app
-# Run with: streamlit run app.py
-# Expects foresight.db (built by foresight_database.py) in the same folder.
-# """
-#
-# import sqlite3
-# import pandas as pd
-# import plotly.express as px
-# import streamlit as st
-#
-# DB_PATH = "foresight.db"
-#
-# st.set_page_config(page_title="FORESIGHT", layout="wide", page_icon="📦")
-#
-#
-# # ---------- Data loading (cached so the DB isn't re-queried on every click) ----------
-# @st.cache_data
-# def load_data():
-#     conn = sqlite3.connect(DB_PATH)
-#     sales = pd.read_sql(
-#         "SELECT s.*, p.Product_Name, p.Category FROM Sales s JOIN Products p ON s.SKU = p.SKU",
-#         conn, parse_dates=["Date"],
-#     )
-#     forecasts = pd.read_sql("SELECT * FROM Forecasts", conn, parse_dates=["Date"])
-#     recs = pd.read_sql(
-#         "SELECT r.*, p.Product_Name, p.Category FROM Recommendations r JOIN Products p ON r.SKU = p.SKU",
-#         conn,
-#     )
-#     products = pd.read_sql("SELECT * FROM Products", conn)
-#     conn.close()
-#     return sales, forecasts, recs, products
-#
-#
-# sales, forecasts, recs, products = load_data()
-#
-# # ---------- Sidebar filters ----------
-# st.sidebar.title("📦 FORESIGHT")
-# st.sidebar.caption("AI-Powered Demand & Inventory Intelligence")
-#
-# categories = st.sidebar.multiselect(
-#     "Category", options=sorted(sales["Category"].unique()), default=sorted(sales["Category"].unique())
-# )
-# sku_options = sorted(sales.loc[sales["Category"].isin(categories), "SKU"].unique())
-# selected_skus = st.sidebar.multiselect("SKU (optional filter)", options=sku_options, default=[])
-#
-# date_min, date_max = sales["Date"].min(), sales["Date"].max()
-# date_range = st.sidebar.date_input("Date range", value=(date_min, date_max), min_value=date_min, max_value=date_max)
-#
-# # Apply filters
-# filtered_sales = sales[sales["Category"].isin(categories)]
-# if selected_skus:
-#     filtered_sales = filtered_sales[filtered_sales["SKU"].isin(selected_skus)]
-# if len(date_range) == 2:
-#     start, end = pd.Timestamp(date_range[0]), pd.Timestamp(date_range[1])
-#     filtered_sales = filtered_sales[(filtered_sales["Date"] >= start) & (filtered_sales["Date"] <= end)]
-#
-# filtered_recs = recs[recs["Category"].isin(categories)]
-# if selected_skus:
-#     filtered_recs = filtered_recs[filtered_recs["SKU"].isin(selected_skus)]
-#
-# # ---------- Tabs ----------
-# tab1, tab2, tab3 = st.tabs(["📊 Overview", "🔮 SKU Forecast", "⚠️ Inventory & Recommendations"])
-#
-# # --- Tab 1: Overview ---
-# with tab1:
-#     st.subheader("Key Performance Indicators")
-#     c1, c2, c3, c4 = st.columns(4)
-#     c1.metric("Total Revenue", f"₹{filtered_sales['Revenue'].sum():,.0f}")
-#     c2.metric("Total Units Sold", f"{filtered_sales['Units_Sold'].sum():,.0f}")
-#     c3.metric("Avg Daily Demand", f"{filtered_sales.groupby('Date')['Units_Sold'].sum().mean():,.1f}")
-#     at_risk = filtered_recs[filtered_recs["Risk_Status"] == "Stockout Risk"].shape[0]
-#     c4.metric("SKUs at Stockout Risk", at_risk)
-#
-#     st.subheader("Demand Trend")
-#     trend = filtered_sales.groupby(filtered_sales["Date"].dt.to_period("M"))["Units_Sold"].sum().reset_index()
-#     trend["Date"] = trend["Date"].dt.to_timestamp()
-#     fig = px.line(trend, x="Date", y="Units_Sold", markers=True, title="Monthly Units Sold")
-#     st.plotly_chart(fig, use_container_width=True)
-#
-#     st.subheader("Revenue by Category")
-#     cat_rev = filtered_sales.groupby("Category")["Revenue"].sum().sort_values(ascending=False).reset_index()
-#     fig2 = px.bar(cat_rev, x="Category", y="Revenue")
-#     st.plotly_chart(fig2, use_container_width=True)
-#
-# # --- Tab 2: SKU Forecast ---
-# with tab2:
-#     st.subheader("Actual vs Forecasted Demand")
-#     fc_sku_options = sorted(forecasts["SKU"].unique())
-#     default_sku = selected_skus[0] if selected_skus else fc_sku_options[0]
-#     chosen_sku = st.selectbox("Choose a SKU", options=fc_sku_options, index=fc_sku_options.index(default_sku))
-#
-#     sku_fc = forecasts[forecasts["SKU"] == chosen_sku].sort_values("Date")
-#     fig3 = px.line(
-#         sku_fc, x="Date", y=["Actual_Demand", "Forecast_Demand"],
-#         title=f"{chosen_sku} — Actual vs Forecast (test period)", markers=True,
-#     )
-#     st.plotly_chart(fig3, use_container_width=True)
-#
-#     mae = (sku_fc["Actual_Demand"] - sku_fc["Forecast_Demand"]).abs().mean()
-#     st.caption(f"Mean Absolute Error for {chosen_sku}: **{mae:.2f} units/day**")
-#
-# # --- Tab 3: Inventory Risk & Recommendations ---
-# with tab3:
-#     st.subheader("Recommendation Breakdown")
-#     dist = filtered_recs["Recommendation"].value_counts().reset_index()
-#     dist.columns = ["Recommendation", "Count"]
-#     fig4 = px.bar(dist, x="Recommendation", y="Count", color="Recommendation")
-#     st.plotly_chart(fig4, use_container_width=True)
-#
-#     st.subheader("SKU-Level Detail")
-#     rec_filter = st.multiselect(
-#         "Filter by recommendation", options=sorted(filtered_recs["Recommendation"].unique()),
-#         default=sorted(filtered_recs["Recommendation"].unique()),
-#     )
-#     table = filtered_recs[filtered_recs["Recommendation"].isin(rec_filter)][
-#         ["SKU", "Product_Name", "Category", "Current_Stock", "On_Order",
-#          "Reorder_Point_Calc", "Days_Of_Stock", "Risk_Status", "Recommendation", "Recommended_Qty"]
-#     ].sort_values("Days_Of_Stock")
-#
-#     def highlight_risk(row):
-#         color = {"Stockout Risk": "#ffcccc", "Overstock": "#fff3cd", "Healthy": "#d4edda"}.get(row["Risk_Status"], "")
-#         return [f"background-color: {color}"] * len(row)
-#
-#     st.dataframe(table.style.apply(highlight_risk, axis=1), use_container_width=True, hide_index=True)
-#
-# st.sidebar.markdown("---")
-# st.sidebar.caption("FORESIGHT · Demand & Inventory Intelligence Platform")
-
 
 """
 FORESIGHT Dashboard — Streamlit app (v2, modern multi-page redesign)
@@ -551,19 +422,34 @@ INK = "#202020"
 MUTED = "#6B6B6B"
 BORDER = "#C9C9C9"
 
+#PAGE_COLORS = {
+ #   "Company Overview": "#536B35",
+  #  "Sales Performance": "#E6C82F",#16A34A
+ #   "Product Performance": "#E48CC5",
+  #  "Category Performance": "#49A3E8",
+  #  "Inventory Health": "#F0A486",
+   # "Stock Risk": "#E56D77",
+    #"Overstock": "#49A3E8",
+   # "Promotion Analysis": "#536B35",
+  #  "Seasonality": "#E6C82F",
+   # "Forecast": "#E48CC5",
+   # "Customer & Business Insights": "#F0A486",
+   # "Recommendation": "#A85B5B",
+#}
+
 PAGE_COLORS = {
-    "Company Overview": "#536B35",
-    "Sales Performance": "#E6C82F",
-    "Product Performance": "#E48CC5",
-    "Category Performance": "#49A3E8",
-    "Inventory Health": "#F0A486",
-    "Stock Risk": "#E56D77",
-    "Overstock": "#49A3E8",
-    "Promotion Analysis": "#536B35",
-    "Seasonality": "#E6C82F",
-    "Forecast": "#E48CC5",
-    "Customer & Business Insights": "#F0A486",
-    "Recommendation": "#A85B5B",
+    "Company Overview": "#2563EB",                 # Blue
+    "Sales Performance": "#16A34A",                # Green
+    "Product Performance": "#7C3AED",             # Purple
+    "Category Performance": "#0891B2",             # Cyan
+    "Inventory Health": "#0F766E",                 # Teal
+    "Stock Risk": "#DC2626",                      # Red
+    "Overstock": "#EA580C",                       # Orange
+    "Promotion Analysis": "#059669",              # Emerald
+    "Seasonality": "#CA8A04",                     # Gold
+    "Forecast": "#9333EA",                        # Violet
+    "Customer & Business Insights": "#0284C7",    # Sky Blue
+    "Recommendation": "#BE123C",                  # Rose
 }
 
 CATEGORY_ORDER = ["Kitchen", "Textiles", "Decor", "Lighting", "Furniture", "Storage"]
@@ -1357,21 +1243,149 @@ elif page == "Stock Risk":
 # ============================================================
 # 7 — OVERSTOCK
 # ============================================================
+#========================================================
+# elif page == "Overstock":
+#     accent = PAGE_COLORS[page]
+#     title_bar("OVERSTOCK", accent)
+
+#     r = recs.copy()
+#     excess_units = val(r, "Excess_Inventory_Units")
+#     excess_value = val(r, "Excess_Inventory_Value")
+#     if "Risk_Status" in r.columns:
+#         overstock_skus = int((r["Risk_Status"].astype(str).str.lower() == "overstock").sum())
+#         dead = int((r["Risk_Status"].astype(str).str.lower().str.contains("dead")).sum())
+#     else:
+#         overstock_skus = int((safe_col(r,["Excess_Inventory_Units"],0) > 0).sum())
+#         dead = 0
+
+#     kpi_row([
+#         (fmt_num(overstock_skus), "Overstock SKUs"),
+#         (fmt_money(excess_value), "Excess Inventory Value"),
+#         (fmt_num(excess_units), "Excess Inventory Units"),
+#         (fmt_num(dead), "Dead Stock SKUs"),
+#     ], accent)
+
+#     main = st.container()
+#     with main:
+#         c1, c2 = st.columns(2)
+#         with c1:
+#             x = r.copy()
+#             x["Overstock"] = pd.to_numeric(safe_col(x,["Excess_Inventory_Units"],0), errors="coerce").fillna(0)
+#             oc = x.groupby("Category", as_index=False)["Overstock"].sum().sort_values("Overstock", ascending=False)
+#             fig = px.bar(oc, x="Category", y="Overstock", title="Overstock SKUs by category")
+#             fig.update_traces(marker_color=accent)
+#             chart(fig, 260)
+#         with c2:
+#             x = r.copy()
+#             x["Excess Value"] = pd.to_numeric(safe_col(x,["Excess_Inventory_Value"],0), errors="coerce").fillna(0)
+#             oc = x.groupby("Category", as_index=False)["Excess Value"].sum().sort_values("Excess Value", ascending=False)
+#             fig = px.bar(oc, x="Category", y="Excess Value", title="Excess Inventory Value by category")
+#             fig.update_traces(marker_color=accent)
+#             chart(fig, 260)
+
+#         cols = [c for c in [
+#             "SKU","Category","Product_Name","Current_Stock","Average_Daily_Demand",
+#             "Cost_Price","Excess_Inventory_Units","Excess_Inventory_Value"
+#         ] if c in r.columns]
+#         st.markdown("**Overstock SKU Details**")
+#         st.dataframe(r[cols].sort_values("Excess_Inventory_Value", ascending=False),
+#                      use_container_width=True, hide_index=True)
+
+#         if "Current_Stock" in r.columns:
+#             sc = r.copy()
+#             sc["Demand"] = pd.to_numeric(safe_col(sc,["Average_Daily_Demand"],0), errors="coerce")
+#             fig = px.scatter(sc, x="Demand", y="Current_Stock", color="Category",
+#                              hover_data=[c for c in ["SKU","Product_Name"] if c in sc.columns],
+#                              title="Inventory vs Demand by SKU")
+#             chart(fig, 300)
+
+#     st.markdown("#### Filters")
+#     filter_row(show_date=True, show_category=True, show_product=True, show_sku=True)
+
+#
+# 7 — OVERSTOCK
+# ============================================================
 
 elif page == "Overstock":
     accent = PAGE_COLORS[page]
     title_bar("OVERSTOCK", accent)
 
     r = recs.copy()
-    excess_units = val(r, "Excess_Inventory_Units")
-    excess_value = val(r, "Excess_Inventory_Value")
+
+    # ------------------------------------------------------------
+    # Ensure Excess Inventory Units exists
+    # ------------------------------------------------------------
+    if "Excess_Inventory_Units" not in r.columns:
+        current_stock = pd.to_numeric(
+            safe_col(r, ["Current_Stock", "On_Hand_Units"], 0),
+            errors="coerce"
+        ).fillna(0)
+
+        forecast_demand = pd.to_numeric(
+            safe_col(r, ["Forecast_Demand"], 0),
+            errors="coerce"
+        ).fillna(0)
+
+        r["Excess_Inventory_Units"] = (
+            current_stock - forecast_demand
+        ).clip(lower=0)
+
+    # ------------------------------------------------------------
+    # Ensure Excess Inventory Value exists
+    # ------------------------------------------------------------
+    if "Excess_Inventory_Value" not in r.columns:
+        excess_units_calc = pd.to_numeric(
+            r["Excess_Inventory_Units"],
+            errors="coerce"
+        ).fillna(0)
+
+        cost_price_calc = pd.to_numeric(
+            safe_col(r, ["Cost_Price"], 0),
+            errors="coerce"
+        ).fillna(0)
+
+        r["Excess_Inventory_Value"] = (
+            excess_units_calc * cost_price_calc
+        )
+
+    # ------------------------------------------------------------
+    # Clean numeric columns
+    # ------------------------------------------------------------
+    r["Excess_Inventory_Units"] = pd.to_numeric(
+        r["Excess_Inventory_Units"],
+        errors="coerce"
+    ).fillna(0)
+
+    r["Excess_Inventory_Value"] = pd.to_numeric(
+        r["Excess_Inventory_Value"],
+        errors="coerce"
+    ).fillna(0)
+
+    # ------------------------------------------------------------
+    # KPI calculations
+    # ------------------------------------------------------------
+    excess_units = r["Excess_Inventory_Units"].sum()
+    excess_value = r["Excess_Inventory_Value"].sum()
+
     if "Risk_Status" in r.columns:
-        overstock_skus = int((r["Risk_Status"].astype(str).str.lower() == "overstock").sum())
-        dead = int((r["Risk_Status"].astype(str).str.lower().str.contains("dead")).sum())
+        risk_status = r["Risk_Status"].astype(str).str.lower()
+
+        overstock_skus = int(
+            (risk_status == "overstock").sum()
+        )
+
+        dead = int(
+            risk_status.str.contains("dead").sum()
+        )
     else:
-        overstock_skus = int((safe_col(r,["Excess_Inventory_Units"],0) > 0).sum())
+        overstock_skus = int(
+            (r["Excess_Inventory_Units"] > 0).sum()
+        )
         dead = 0
 
+    # ------------------------------------------------------------
+    # KPI CARDS
+    # ------------------------------------------------------------
     kpi_row([
         (fmt_num(overstock_skus), "Overstock SKUs"),
         (fmt_money(excess_value), "Excess Inventory Value"),
@@ -1379,43 +1393,172 @@ elif page == "Overstock":
         (fmt_num(dead), "Dead Stock SKUs"),
     ], accent)
 
+    # ------------------------------------------------------------
+    # MAIN CONTENT
+    # ------------------------------------------------------------
     main = st.container()
+
     with main:
+
         c1, c2 = st.columns(2)
+
+        # --------------------------------------------------------
+        # Overstock by Category
+        # --------------------------------------------------------
         with c1:
+
             x = r.copy()
-            x["Overstock"] = pd.to_numeric(safe_col(x,["Excess_Inventory_Units"],0), errors="coerce").fillna(0)
-            oc = x.groupby("Category", as_index=False)["Overstock"].sum().sort_values("Overstock", ascending=False)
-            fig = px.bar(oc, x="Category", y="Overstock", title="Overstock SKUs by category")
-            fig.update_traces(marker_color=accent)
-            chart(fig, 260)
+
+            x["Overstock"] = pd.to_numeric(
+                x["Excess_Inventory_Units"],
+                errors="coerce"
+            ).fillna(0)
+
+            if "Category" in x.columns:
+
+                oc = (
+                    x.groupby("Category", as_index=False)["Overstock"]
+                    .sum()
+                    .sort_values("Overstock", ascending=False)
+                )
+
+                fig = px.bar(
+                    oc,
+                    x="Category",
+                    y="Overstock",
+                    title="Overstock SKUs by Category"
+                )
+
+                fig.update_traces(marker_color=accent)
+
+                chart(fig, 260)
+
+        # --------------------------------------------------------
+        # Excess Inventory Value by Category
+        # --------------------------------------------------------
         with c2:
+
             x = r.copy()
-            x["Excess Value"] = pd.to_numeric(safe_col(x,["Excess_Inventory_Value"],0), errors="coerce").fillna(0)
-            oc = x.groupby("Category", as_index=False)["Excess Value"].sum().sort_values("Excess Value", ascending=False)
-            fig = px.bar(oc, x="Category", y="Excess Value", title="Excess Inventory Value by category")
-            fig.update_traces(marker_color=accent)
-            chart(fig, 260)
 
-        cols = [c for c in [
-            "SKU","Category","Product_Name","Current_Stock","Average_Daily_Demand",
-            "Cost_Price","Excess_Inventory_Units","Excess_Inventory_Value"
-        ] if c in r.columns]
+            x["Excess Value"] = pd.to_numeric(
+                x["Excess_Inventory_Value"],
+                errors="coerce"
+            ).fillna(0)
+
+            if "Category" in x.columns:
+
+                oc = (
+                    x.groupby("Category", as_index=False)["Excess Value"]
+                    .sum()
+                    .sort_values(
+                        "Excess Value",
+                        ascending=False
+                    )
+                )
+
+                fig = px.bar(
+                    oc,
+                    x="Category",
+                    y="Excess Value",
+                    title="Excess Inventory Value by Category"
+                )
+
+                fig.update_traces(marker_color=accent)
+
+                chart(fig, 260)
+
+        # --------------------------------------------------------
+        # Overstock SKU Details
+        # --------------------------------------------------------
+        cols = [
+            c for c in [
+                "SKU",
+                "Category",
+                "Product_Name",
+                "Current_Stock",
+                "Average_Daily_Demand",
+                "Cost_Price",
+                "Excess_Inventory_Units",
+                "Excess_Inventory_Value"
+            ]
+            if c in r.columns
+        ]
+
         st.markdown("**Overstock SKU Details**")
-        st.dataframe(r[cols].sort_values("Excess_Inventory_Value", ascending=False),
-                     use_container_width=True, hide_index=True)
 
+        # IMPORTANT:
+        # Sort the original dataframe BEFORE selecting columns.
+        table = (
+            r.sort_values(
+                "Excess_Inventory_Value",
+                ascending=False
+            )[cols]
+        )
+
+        st.dataframe(
+            table,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # --------------------------------------------------------
+        # Inventory vs Demand
+        # --------------------------------------------------------
         if "Current_Stock" in r.columns:
+
             sc = r.copy()
-            sc["Demand"] = pd.to_numeric(safe_col(sc,["Average_Daily_Demand"],0), errors="coerce")
-            fig = px.scatter(sc, x="Demand", y="Current_Stock", color="Category",
-                             hover_data=[c for c in ["SKU","Product_Name"] if c in sc.columns],
-                             title="Inventory vs Demand by SKU")
+
+            sc["Demand"] = pd.to_numeric(
+                safe_col(
+                    sc,
+                    ["Average_Daily_Demand"],
+                    0
+                ),
+                errors="coerce"
+            ).fillna(0)
+
+            hover_cols = [
+                c for c in [
+                    "SKU",
+                    "Product_Name"
+                ]
+                if c in sc.columns
+            ]
+
+            if "Category" in sc.columns:
+
+                fig = px.scatter(
+                    sc,
+                    x="Demand",
+                    y="Current_Stock",
+                    color="Category",
+                    hover_data=hover_cols,
+                    title="Inventory vs Demand by SKU"
+                )
+
+            else:
+
+                fig = px.scatter(
+                    sc,
+                    x="Demand",
+                    y="Current_Stock",
+                    hover_data=hover_cols,
+                    title="Inventory vs Demand by SKU"
+                )
+
             chart(fig, 300)
 
+    # ------------------------------------------------------------
+    # FILTERS
+    # ------------------------------------------------------------
     st.markdown("#### Filters")
-    filter_row(show_date=True, show_category=True, show_product=True, show_sku=True)
 
+    filter_row(
+        show_date=True,
+        show_category=True,
+        show_product=True,
+        show_sku=True
+    )
 # ============================================================
 # 8 — PROMOTION ANALYSIS
 # ============================================================
@@ -1486,7 +1629,7 @@ elif page == "Promotion Analysis":
                 chart(fig, 280)
 
         st.markdown("#### Filters")
-        filter_row(show_date=True, show_category=True, show_product=True, show_sku=True)
+        filter_row(show_date=True, show_category=True, show_product=True, show_sku=True) 
 
 # ============================================================
 # 9 — SEASONALITY
